@@ -1,0 +1,5 @@
+{
+  "terminal.integrated.env.windows": {
+    "OPENAI_API_KEY": "your-openai-api-key-here"
+  }
+}
