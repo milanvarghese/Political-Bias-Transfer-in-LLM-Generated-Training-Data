@@ -1,0 +1,17 @@
+This is a well-motivated project with a clear research question, and I especially like the controlled experimental design.
+
+You should further strengthen the definition and measurement of “bias shift.” Be more precise; how exactly will you quantify bias? For example, will you measure changes in class distribution, calibration differences, or systematic skew toward certain targets or stances?
+
+You should also think more carefully about the data generation process, especially how “neutral prompts” may still result in biased outputs depending on the model.
+
+Consider including error analysis and model comparison, do RoBERTa and Llama-3 behave differently when trained on biased synthetic data?
+
+You might also want to briefly discuss limitations, such as the assumption that P-Stance labels are unbiased ground truth and whether your findings generalize beyond this dataset.
+
+Additionally, have you considered potential data leakage? Since LLMs like GPT-4o or Llama-3 may have been trained on data similar to P-Stance or related political tweets, this could affect your results and blur the distinction between “real” and “synthetic” data. Clarifying this risk and how you account for it would strengthen your study.
+
+
+
+
+
+Prof also mentioned about SemEval dataset as well.
