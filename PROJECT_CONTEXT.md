@@ -70,7 +70,7 @@ When GPT-4o-mini or Llama-3-8B-Instruct is used to generate synthetic training d
 | # | Model | Method | Hub ID |
 |---|---|---|---|
 | 1 | **RoBERTa-base** (125M) | Full fine-tuning | `FacebookAI/roberta-base` |
-| 2 | **Llama-3-8B** (base, NOT Instruct) | LoRA (r=16) | `meta-llama/Meta-Llama-3-8B` |
+| 2 | **Llama-3-8B** (base, NOT Instruct) |    | `meta-llama/Meta-Llama-3-8B` |
 
 **Important:** Llama-3-8B-**Instruct** is used for *generation*; Llama-3-8B-**base** is used for *classification fine-tuning*. They are different model variants.
 
