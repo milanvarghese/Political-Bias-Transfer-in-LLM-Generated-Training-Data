@@ -1,0 +1,16 @@
+{
+  "classifier": "debertav3",
+  "generator": "qwen-2.5-7b",
+  "real_f1": 0.849,
+  "synth_f1": 0.766,
+  "mixed_f1": 0.834,
+  "trump_synth_dF1": -0.09899999999999998,
+  "biden_synth_dF1": -0.06399999999999995,
+  "bernie_synth_dF1": -0.08100000000000007,
+  "bias_synth_full": -0.05285976292687711,
+  "bias_synth_balanced": -0.04257710637532608,
+  "bias_mixed_full": -0.005442834973036326,
+  "bias_mixed_balanced": -0.00029504990558393285,
+  "runtime_min": 7.3,
+  "status": "trained"
+}

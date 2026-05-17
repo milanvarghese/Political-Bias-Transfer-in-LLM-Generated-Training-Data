@@ -1,0 +1,16 @@
+{
+  "classifier": "roberta",
+  "generator": "qwen-2.5-7b",
+  "real_f1": 0.824,
+  "synth_f1": 0.705,
+  "mixed_f1": 0.805,
+  "trump_synth_dF1": -0.1479999999999999,
+  "biden_synth_dF1": -0.11499999999999999,
+  "bernie_synth_dF1": -0.08500000000000008,
+  "bias_synth_full": 0.16874861438619843,
+  "bias_synth_balanced": 0.16528695710817382,
+  "bias_mixed_full": 0.02153985241233569,
+  "bias_mixed_balanced": 0.016795364625483145,
+  "runtime_min": 4.6,
+  "status": "trained"
+}
