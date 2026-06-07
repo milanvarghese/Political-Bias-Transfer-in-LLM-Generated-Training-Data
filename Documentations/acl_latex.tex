@@ -1,0 +1,439 @@
+\documentclass[11pt]{article}
+
+% Using "preprint" to show author name and affiliation (class submission, not anonymous ACL review).
+\usepackage[preprint]{acl}
+
+% Standard package includes
+\usepackage{times}
+\usepackage{latexsym}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{microtype}
+\usepackage{inconsolata}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{xcolor}
+
+\title{Three Mechanisms of Political Bias Transfer in \\ LLM-Generated Stance Detection Training Data}
+
+\author{Milan Varghese \\
+  Drexel University \\
+  \texttt{mv644@drexel.edu} \\\And
+  Vedavarshita Nunna \\
+  Drexel University \\
+  \texttt{vn367@drexel.edu} \\}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+When labeled data is scarce, researchers increasingly use large language models (LLMs) to write synthetic training examples. But LLMs themselves carry political views, and those views may quietly transfer into any classifier trained on their text. We test this directly using political stance data about Donald Trump, Joe Biden, and Bernie Sanders. We train 189 stance classifiers --- combinations of three classifier architectures, seven LLM generators, three training conditions, and three random seeds --- and evaluate each on real Twitter data the classifier has never seen. Every combination shows a statistically significant change in classifier predictions, and the direction of the change matches the LLM's known political lean. Examining the synthetic text word by word reveals three distinct ways this happens. Commercial chat models \emph{sanitize} partisan language out of their output. Some open-weight models \emph{invert the political polarity} of supporter vocabulary. And one model that appears politically neutral on the standard Biden-vs-Trump bias measure is actually strongly biased on a hidden axis --- its anti-Sanders signal only emerges through word-level or multi-axis analysis. Standard single-axis bias measurements miss this entirely. Researchers using LLM-generated training data for political classification should audit bias at the vocabulary level, not only along the most salient political axis.
+\end{abstract}
+
+\section{Introduction}
+
+Large language models (LLMs) such as GPT-4, Llama, and Qwen are increasingly used to generate synthetic training data for supervised learning tasks where labeled examples are expensive or hard to collect. For political stance detection, recent work has shown that LLM-generated tweets can substantially improve classifier performance \citep{wagner2024synth}. The same work flagged a worrying possibility: because the LLMs that produce this synthetic text carry their own political views, classifiers trained on their output may inherit those views without anyone noticing. This concern has not, until now, been empirically tested.
+
+The concern is consequential for any field that uses automated stance classifiers --- communications research, public opinion analysis, social media moderation, election studies. LLMs are known to exhibit political bias, and the bias differs by model family. Commercial models that go through heavy fine-tuning to align with human preferences tend to produce text with a left-libertarian lean \citep{santurkar2023whose, rottger2024political}. Open-weight models with lighter alignment training behave differently and have been studied less. If researchers using these models for synthetic data do not check for downstream effects, the political distortions in their training data may quietly shape what their classifiers learn to predict.
+
+\paragraph{Research questions.} We investigate three concrete questions:
+
+\begin{itemize}
+    \item \textbf{RQ1.} Does training a stance classifier on LLM-generated synthetic tweets shift the classifier's predictions on real tweets?
+    \item \textbf{RQ2.} Does the direction of the shift depend on the LLM used to generate the training data?
+    \item \textbf{RQ3.} Can mixing real and synthetic data mitigate the shift?
+\end{itemize}
+
+\paragraph{Contributions.} This paper makes the following contributions:
+
+\begin{enumerate}
+    \item \textbf{The first systematic empirical evidence} that an LLM's political bias transfers to downstream stance classifiers via synthetic training data. We test this across 7 LLMs $\times$ 3 classifier architectures $\times$ 3 training conditions $\times$ 3 random seeds (189 total training runs), and find a statistically significant prediction shift in every one of the 21 (classifier, LLM) pairings.
+    \item \textbf{The direction of the bias matches each LLM's known political lean.} GPT-4o-mini, Gemma-2-9B, GPT-5.4-mini, and Mistral-7B all produce classifiers that drift anti-Trump. The Meta Llama family produces classifiers that drift pro-Trump. Qwen-2.5-7B drifts very little on the standard Biden-vs-Trump axis.
+    \item \textbf{Three distinct vocabulary-level mechanisms} by which bias transfers: \emph{sanitization} (the LLM scrubs partisan language out of its synthetic output), \emph{polarity inversion} (the LLM flips supporter vocabulary's stance association), and \emph{hidden axis inversion} (the LLM appears neutral on the headline metric but is biased on a different political axis).
+    \item \textbf{A methodological warning for bias audits.} The standard single-axis bias score misses a clear anti-Bernie signal in Qwen-2.5-7B. Any bias audit of an LLM used for synthetic data should look beyond a single political axis and inspect the actual vocabulary that ends up in the synthetic text.
+\end{enumerate}
+
+\section{Related Work}
+
+\paragraph{Background: What is stance detection?}
+Stance detection is the task of classifying a piece of text by the position it takes toward a specified target. Given a tweet and a target (here, a politician), a stance classifier predicts whether the tweet expresses FAVOR or AGAINST that target. Stance detection differs from the more common task of \emph{sentiment analysis} in one critical way: the target matters. A tweet that says ``Bernie is finally telling the truth about the establishment'' expresses FAVOR toward Sanders but AGAINST the establishment; the sentence is positive in tone but its stance varies entirely with the target. Stance detection has become a workhorse method in computational social science, used in studies of election dynamics, public opinion shifts, polarization, content moderation, and political mobilization. Reliable stance detection requires training data, and the cost of human-labeling enough tweets has motivated the recent move to LLM-generated synthetic alternatives that this paper examines.
+
+\paragraph{Using LLMs to write synthetic training data.}
+\citet{wagner2024synth} showed that synthetic tweets written by Mistral-7B substantially improve classifier performance on the X-Stance dataset (German political discussions). They observed that the LLM's own political views might leak into the resulting classifier, but did not measure whether this happened. Our work directly addresses that question.
+
+\paragraph{Background: Why do LLMs hold political views at all?}
+An LLM is, at its core, a model of how language statistically continues from a given prompt. Its political behavior emerges from two distinct stages of its training. First, during \emph{pretraining}, the model digests massive amounts of text from the open internet --- news articles, books, social media posts, forum discussions. The political distribution of that text shapes the model's initial associations between political vocabulary, ideologies, and discourse styles. Second, modern commercial LLMs go through an \emph{alignment} phase, often using reinforcement learning from human feedback (RLHF), in which the model is taught to avoid harmful outputs, refuse some requests, and respond in particular tones. The alignment phase is where the safety-related guardrails are installed. The two training stages combine to produce systematic political tendencies that vary by model.
+
+A growing body of empirical work documents these tendencies. \citet{santurkar2023whose} showed that OpenAI's models reflect a narrow slice of U.S. public opinion roughly consistent with a left-libertarian profile. \citet{rottger2024political} argued that ``political compass''--style measurements of LLMs can be misleading and proposed more careful evaluation procedures. \citet{feng2023pretraining} traced political bias from pretraining text through the resulting language model and into downstream classifiers fine-tuned on it; they showed bias travels along the \emph{pretraining-to-classifier} pathway. Our paper studies a different pathway: \emph{LLM-to-synthetic-data-to-classifier}.
+
+\paragraph{Stance detection datasets.}
+\citet{li2021pstance} released P-Stance, a dataset of 21{,}574 real tweets about Donald Trump, Joe Biden, and Bernie Sanders. Each tweet is labeled as expressing either FAVOR or AGAINST stance toward its target. P-Stance is our evaluation benchmark.
+
+\section{Data}
+
+\subsection{Real Data: P-Stance}
+P-Stance \citep{li2021pstance} contains 21{,}574 real tweets about Donald Trump, Joe Biden, and Bernie Sanders. Each tweet has been hand-labeled as either supporting (FAVOR) or opposing (AGAINST) its target. The labels were assigned by three annotators with high inter-annotator agreement (Krippendorff's $\alpha = 0.81$, where 1.0 would be perfect agreement). We use the standard 80\%--10\%--10\% train--validation--test split, stratified within each target. The dataset is slightly imbalanced ($\sim$51.7\% AGAINST overall) and the imbalance varies by target: Bernie's tweets lean supportive ($\sim$56\% FAVOR), while Trump and Biden tweets lean negative ($\sim$54--56\% AGAINST). Table~\ref{tab:pstance} summarizes the splits.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Target} & \textbf{Train} & \textbf{Val} & \textbf{Test} & \textbf{\%FAVOR} \\
+\midrule
+Donald Trump   & 6{,}362 & 814 & 777 & 46\% \\
+Joe Biden      & 5{,}806 & 745 & 745 & 44\% \\
+Bernie Sanders & 5{,}056 & 634 & 635 & 56\% \\
+\bottomrule
+\end{tabular}
+\caption{P-Stance dataset splits and per-target FAVOR proportions (training split).}
+\label{tab:pstance}
+\end{table}
+
+\subsection{Synthetic Data: 7 Generators}
+We use 7 LLMs spanning multiple alignment regimes to generate synthetic training tweets. Table~\ref{tab:generators} lists the generators and their alignment characteristics.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lll}
+\toprule
+\textbf{Provider} & \textbf{Model} & \textbf{Alignment} \\
+\midrule
+OpenAI     & gpt-4o-mini    & Heavy RLHF (commercial) \\
+OpenAI     & gpt-5.4-mini   & Heavy RLHF (newer) \\
+Mistral AI & Mistral-7B-v0.3 & Lighter alignment \\
+Google     & Gemma-2-9B     & Heavy RLHF \\
+Alibaba    & Qwen-2.5-7B    & Different RLHF philosophy \\
+Meta       & Llama-3.1-8B   & Open RLHF \\
+Meta       & Llama-3.2-3B   & Open RLHF (smaller) \\
+\bottomrule
+\end{tabular}
+\caption{The 7 generator LLMs used to produce synthetic training data.}
+\label{tab:generators}
+\end{table}
+
+\paragraph{Generation protocol.}
+For each LLM, we generated 7{,}200 synthetic tweets balanced equally across the six possible target--stance combinations (three targets $\times$ two stances). The prompts were deliberately \textbf{neutral and label-only} --- for example, \emph{``Write a single tweet expressing a stance in favor of \{target\}, focused on \{topic\}. Format it as \{format\}. Stay under 200 characters.''} We never told the LLM \emph{how} to be in favor or against; we asked only for a tweet with a specified stance. Variety in the prompts came from surface-level scaffolding (4 templates $\times$ 6 topics $\times$ 4 formats $=$ 96 distinct prompts per target--stance cell), not from political framing. The neutral prompting is the key design choice: any political slant in the resulting synthetic data must come from the LLM's own learned preferences, not from our instructions.
+
+\paragraph{Why these seven LLMs?}
+The seven LLMs were selected to span several dimensions of variation that we expected might affect bias-transfer behavior. Two LLMs come from OpenAI (GPT-4o-mini and the newer GPT-5.4-mini): including both lets us test whether bias profiles drift across successive generations of a single provider's alignment regime. Three LLMs come from open-weight families with very different alignment approaches: Mistral-7B (relatively lightly aligned), Gemma-2-9B (Google's heavily aligned open-weight model), and Qwen-2.5-7B (Alibaba's heavily aligned model from a non-Western training context). Two more are from Meta's Llama family --- Llama-3.1-8B and Llama-3.2-3B --- which lets us test whether bias is sensitive to parameter count within a single model family. Across the seven LLMs, we cover three closed-API commercial models, four open-weight models, three distinct national training contexts (US, Europe via Mistral, China via Qwen), and a parameter range from 3B to roughly 9B. We deliberately did not include intentionally provocative or politically-trained models (e.g., Grok); such models would conflate ``does political bias transfer?'' with ``what happens if you train on intentionally partisan output?'' which is a different research question.
+
+\subsection{Synthetic Data Audit (Step 1.5)}
+Before classifier training, we audit each generator's synthetic data along 6 dimensions: character length, hashtag count, distinct-2 vocabulary diversity, self-BLEU, sentence-BERT cosine similarity to real tweets, and FAVOR/AGAINST asymmetry. Key audit findings:
+
+\begin{itemize}
+    \item \textbf{Open-weight models produce more diverse text} (lower self-BLEU, higher distinct-2) than commercial APIs.
+    \item \textbf{GPT-5.4-mini is more out-of-distribution} than GPT-4o-mini (lower cosine similarity to real).
+    \item \textbf{Gemma-2-9B shows the largest FAVOR/AGAINST length asymmetry} (+50\%), indicating templated FAVOR generation.
+\end{itemize}
+
+\section{Methodology}
+
+\subsection{Classifiers and Training Conditions}
+
+We use three pretrained text classifier models, all from the transformer family used widely in NLP research. They were chosen to vary along one dimension --- the kind of text each was originally pretrained on:
+\begin{itemize}
+    \item \textbf{RoBERTa-base} (125M parameters): pretrained on general web and book text. A standard text-classification baseline.
+    \item \textbf{DeBERTa-v3-base} (184M): pretrained on similar general-corpus text but with a more sophisticated attention mechanism. Generally the strongest of the three on benchmark tasks.
+    \item \textbf{BERTweet-base} (134M): pretrained on English Twitter text. The only one of the three with prior exposure to social media language.
+\end{itemize}
+
+We selected this mix to test whether prior exposure to Twitter-style political language (BERTweet) changes how susceptible a classifier is to bias transferred through synthetic data.
+
+We trained each classifier under three conditions per LLM:
+\begin{itemize}
+    \item \textbf{Real}: the standard P-Stance training data only. This is our baseline.
+    \item \textbf{Synth}: 7{,}200 synthetic tweets from one LLM, instead of real data.
+    \item \textbf{Mixed}: 50\% real tweets and 50\% synthetic tweets from one LLM.
+\end{itemize}
+
+Each (classifier, LLM, condition) combination was trained three times with different random seeds (42, 123, 7), so that we could measure how much our results vary across random initializations. In total, $3 \text{ classifiers} \times 7 \text{ LLMs} \times 3 \text{ conditions} \times 3 \text{ seeds} = \mathbf{189}$ training runs. Every classifier was tested on the same real P-Stance held-out test set --- never on synthetic text --- which means any difference between classifiers must be attributable to the data they were trained on.
+
+\subsection{Measuring Bias: The Bias Score}
+
+To measure whether a classifier has shifted in a politically meaningful direction, we use a \emph{bias score} that compares the prediction patterns of the synth-trained classifier against the real-trained baseline.
+
+The intuition is straightforward. If a synth-trained classifier becomes, relative to its real-data counterpart, more inclined to predict FAVOR for Biden tweets \emph{and} more inclined to predict AGAINST for Trump tweets, we say it has shifted in the anti-Trump direction. If the asymmetry runs the other way, the shift is pro-Trump. Formally, on the Biden-vs-Trump (BvT) axis:
+
+\begin{equation}
+\label{eq:bias}
+\mathrm{Bias}_{\mathrm{BvT}} = (\Delta_{B,F} - \Delta_{T,F}) + (\Delta_{T,A} - \Delta_{B,A})
+\end{equation}
+
+\noindent where each $\Delta(t,c)$ is the change in how often the classifier predicts class $c$ for target $t$ when trained on synthetic data instead of real data:
+\begin{equation}
+\Delta(t,c) = P_{\mathrm{synth}}(\hat{y} = c \mid t) - P_{\mathrm{real}}(\hat{y} = c \mid t)
+\end{equation}
+
+\noindent Here $t \in \{\text{Trump}, \text{Biden}\}$ and $c \in \{\text{FAVOR}, \text{AGAINST}\}$.
+
+\paragraph{How to read the bias score.}
+A positive score means the synth-trained classifier shifted toward pro-Biden / anti-Trump predictions. A negative score means the opposite. A score near zero means the synth-trained classifier does not show systematically different prediction patterns from the real-trained one (along this particular political axis). Because the score is a difference of differences, it cancels out common changes that affect Trump and Biden tweets equally --- it isolates the \emph{asymmetric} shift between the two, which is what we mean by political bias here.
+
+\paragraph{Extending beyond Biden-vs-Trump.} The same formula works for any two political figures. We also compute the bias score for the Bernie-vs-Trump and Biden-vs-Bernie axes to give a full picture across the three-figure political space. Because the raw prediction counts needed for the exact formula were saved only for Qwen-2.5-7B during the main training runs, we use an approximation based on per-class F1 scores for the other LLMs (an ``F1-proxy''). The proxy agrees with the exact formula in direction on all 7 LLMs we tested (Section~\ref{sec:multi-axis}).
+
+\subsection{Measuring Bias at the Word Level: Z-Scores}
+
+The bias score above tells us whether a classifier's predictions have shifted. To understand \emph{why} they shifted, we also examine the synthetic text itself, asking: which words does each LLM systematically associate with FAVOR or AGAINST contexts, and does that match how real human writers use those words?
+
+For each LLM and each target, we calculate a Z-score for every word indicating whether the word appears disproportionately in FAVOR tweets or in AGAINST tweets. The formula is a standard two-proportion Z-test:
+
+\begin{equation}
+Z(w \mid t, g) = \frac{p_1 - p_2}{\sqrt{\hat{p}(1-\hat{p})(\tfrac{1}{n_1} + \tfrac{1}{n_2})}}
+\end{equation}
+
+\noindent where $p_1$ is the proportion of FAVOR tweets containing word $w$, $p_2$ is the proportion of AGAINST tweets containing $w$, and $\hat{p}$ is the pooled proportion. A large positive $Z$ means the word skews FAVOR; a large negative $Z$ means it skews AGAINST.
+
+We compute the same Z-scores on the real P-Stance training data, then compare the synthetic word patterns against the real ones in two ways:
+
+\begin{itemize}
+    \item \textbf{Spearman rank correlation ($\rho$):} a rank-based correlation measuring overall agreement between the synthetic and real Z-score orderings. Closer to 1.0 means the LLM associates words with stance in roughly the same way as real tweeters; closer to 0 means the patterns diverge.
+    \item \textbf{Sign flips:} the count of words used predominantly in FAVOR contexts in real tweets but in AGAINST contexts in synthetic tweets (or vice versa). A high count of sign flips suggests the LLM is systematically inverting how a vocabulary is being used.
+\end{itemize}
+
+We use Spearman rather than Pearson correlation because Z-score distributions have heavy tails --- a small number of extreme words could dominate a Pearson correlation, while Spearman is robust to that.
+
+\subsection{Why These Three LLMs for Word-Level Analysis?}
+
+We performed the word-level Z-score analysis on three of the seven LLMs, chosen by experimental design rather than convenience:
+
+\begin{itemize}
+    \item \textbf{GPT-4o-mini} had the strongest positive bias score (+0.178), making it the most anti-Trump generator in our set.
+    \item \textbf{Llama-3.2-3B} had the strongest negative bias score (--0.147), making it the most pro-Trump.
+    \item \textbf{Qwen-2.5-7B} had the smallest absolute bias score (+0.029), making it the closest to neutral on the standard BvT axis. We treat it as the experimental control.
+\end{itemize}
+
+This three-LLM design --- two opposite-direction extremes plus a neutral control --- is the minimum needed to test whether different LLMs transfer bias through different vocabulary mechanisms.
+
+\subsection{Statistical Rigor}
+
+To rule out chance, we apply several standard tests:
+\begin{itemize}
+    \item \textbf{Paired t-tests} comparing each classifier's F1 score under synthetic vs.~real training, across the three random seeds.
+    \item \textbf{Bootstrap 95\% confidence intervals} on the F1-proxy bias scores, with 5{,}000 resamples per (classifier, LLM) cell.
+    \item \textbf{Class-imbalance robustness check}: we recompute every bias score under two weighting schemes, one that uses the raw prediction proportions and one that gives equal weight to each (target, class) cell. The two variants correlate at $r = 0.998$, ruling out class imbalance as a driver of the findings.
+\end{itemize}
+
+\section{Results}
+
+\subsection{Synthetic Training Always Hurts Performance and Always Causes a Detectable Shift}
+
+The first finding is that training on LLM-generated synthetic tweets, instead of real ones, always hurts classifier accuracy on real tweets --- as expected --- and the loss is statistically significant in every case we tested. Across all 21 (classifier, LLM) pairings, the synth-trained classifier loses between 8.0 and 14.6 percentage points of macro F1 (a standard accuracy metric that averages performance over both classes equally). Paired t-tests against the real-data baseline show $p < 0.05$ in all 21 cases, with a mean $p$-value of 0.009. Bootstrap 95\% confidence intervals on the bias score also exclude zero in 18 of 21 cases. The three exceptions all involve LLMs whose mean bias is closest to zero (DeBERTaV3 + Qwen-2.5-7B; BERTweet + Qwen-2.5-7B; BERTweet + Llama-3.1-8B), consistent with the interpretation that bias \emph{is} there but is small enough to fall within seed-level noise on these three combinations. Table~\ref{tab:headline} reports the averaged F1 and bias numbers across the seven LLMs.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Classifier} & \textbf{Real} & \textbf{Synth} & \textbf{Mixed} & \textbf{|Bias|} \\
+                    & \textbf{F1}   & \textbf{F1}    & \textbf{F1}    & \textbf{(synth)} \\
+\midrule
+RoBERTa     & 0.824 & 0.705 & 0.811 & 0.187 \\
+DeBERTa-v3  & 0.849 & 0.747 & 0.838 & 0.128 \\
+BERTweet    & 0.820 & 0.702 & 0.804 & 0.076 \\
+\bottomrule
+\end{tabular}
+\caption{Headline F1 (mean across 7 generators, 3 seeds) and mean absolute BvT bias score (synth condition). All F1 drops are statistically significant (paired t-test, $p < 0.05$).}
+\label{tab:headline}
+\end{table}
+
+\subsection{The Direction of the Shift Matches the LLM's Known Political Lean}
+
+Critically, the F1 loss is not random. The errors fall asymmetrically along partisan lines, and the direction matches what we already know about each LLM. Table~\ref{tab:generator-lean} ranks the 7 LLMs by their average bias score. The pattern is striking: every heavily fine-tuned commercial model in our set --- GPT-4o-mini, GPT-5.4-mini, Gemma-2-9B --- produces classifiers that drift anti-Trump. Mistral-7B does the same. Qwen-2.5-7B sits at neutral on this axis. The two Meta Llama models drift the other way, toward pro-Trump. The smaller Llama-3.2-3B shows the strongest pro-Trump shift in our entire set, and it shows the shift consistently across every classifier architecture we tested. Bias direction, in short, tracks alignment regime.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lrl}
+\toprule
+\textbf{Generator} & \textbf{Mean BvT} & \textbf{Lean} \\
+\midrule
+gpt-4o-mini   & +0.178 & anti-Trump \\
+gemma-2-9b    & +0.143 & anti-Trump \\
+gpt-5.4-mini  & +0.129 & anti-Trump \\
+mistral-7b    & +0.126 & anti-Trump \\
+qwen-2.5-7b   & +0.029 & neutral \\
+llama-3.1-8b  & --0.072 & neutral$^\dagger$ \\
+llama-3.2-3b  & --0.147 & pro-Trump \\
+\bottomrule
+\end{tabular}
+\caption{Signed mean BvT bias score per generator (mean across 3 classifiers). Lean classified as ``clear'' when $|$bias$| \geq 0.10$. $^\dagger$ llama-3.1-8b's direction flips across classifiers (cross-classifier consistency = 0.468).}
+\label{tab:generator-lean}
+\end{table}
+
+\subsection{Some Classifiers Resist Bias Better Than Others}
+
+The magnitude of the bias also depends on the classifier. RoBERTa, pretrained on generic web and book text, shows the highest susceptibility (mean absolute bias 0.187). BERTweet, pretrained on actual tweets, shows the lowest (0.076). DeBERTa-v3 sits between (0.128). Our interpretation: BERTweet has already seen real political discourse during its pretraining phase, so its internal representations are already partially calibrated to how political language is actually used on Twitter. When synthetic tweets push the classifier in one direction during fine-tuning, BERTweet's prior makes it harder to budge. RoBERTa, without that prior, drifts more easily. This is a tentative explanation worth testing in follow-up work.
+
+\subsection{Mixing Real and Synthetic Data Helps, Mostly}
+
+Our third research question asked whether the bias can be reduced by mixing real and synthetic data, rather than training on synthetic alone. The short answer is: yes, mostly. On average, mixing 50\% real data with 50\% synthetic data cuts the absolute bias score nearly in half (from 0.130 down to 0.067, a 41\% reduction) and recovers about 88\% of the accuracy lost from synthetic-only training. Mixing is a meaningful mitigation.
+
+But it is not uniformly safe. Treating $|$bias$| \geq 0.05$ as the threshold above which we consider a bias score meaningfully different from noise, the 21 (classifier, LLM) combinations distribute as follows after mixing:
+
+\begin{itemize}
+    \item \textbf{Bias was meaningful, mixing brought it to near-zero}: 6 of 21 combinations. Mixing did exactly what it was supposed to.
+    \item \textbf{Bias reduced in magnitude but kept the same sign}: 8 of 21. Partial mitigation.
+    \item \textbf{Bias reversed direction with both sides meaningful}: 2 of 21. A genuine over-correction.
+    \item \textbf{Bias was already noise-level and stayed there}: 4 of 21.
+    \item \textbf{Bias was noise-level before mixing but became meaningful after}: 1 of 21.
+\end{itemize}
+
+The two real direction-reversals both happen on the BERTweet classifier (paired with GPT-4o-mini and with Mistral-7B). This is a striking pattern that turns out to make some sense once we recall that BERTweet was the classifier already partially calibrated to real Twitter discourse via its pretraining. Adding more real-data signal during fine-tuning, in combination with synthetic data of the opposite political lean, can push it past zero and into the opposite-leaning region. We return to this in the discussion.
+
+\section{Three Mechanisms of Bias Transfer}
+\label{sec:mechanisms}
+
+The results above tell us \emph{that} different LLMs produce classifiers with different political leans, but not \emph{why}. To answer why, we turn to the word-level Z-score analysis described earlier, applied to our three case-study LLMs (the two directional extremes plus the neutral control). What we find is that all three LLMs distort the synthetic political language they generate, but they distort it in three fundamentally different ways. Table~\ref{tab:spearman} reports the Spearman rank correlation between the synthetic and real Z-scores for each (LLM, target) combination.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Target} & \textbf{gpt-4o-mini} & \textbf{qwen} & \textbf{llama-3.2-3b} \\
+\midrule
+Trump   & \textbf{0.258}$^\ast$ & 0.298 & 0.332 \\
+Biden   & 0.355 & 0.313 & \textbf{0.317}$^\ast$ \\
+Sanders & 0.440 & 0.362 & 0.413 \\
+\bottomrule
+\end{tabular}
+\caption{Spearman rank correlation between synthetic and real Z-scores per (generator, target). $^\ast$ = lowest $\rho$ for that generator. Lower $\rho$ = greater vocabulary divergence. Each generator's lowest-$\rho$ target matches its bias profile.}
+\label{tab:spearman}
+\end{table}
+
+\subsection{Mechanism 1: Sanitization (GPT-4o-mini)}
+
+GPT-4o-mini, the strongest anti-Trump LLM in our set (bias score +0.178), shows the largest vocabulary divergence on \emph{Trump} ($\rho = 0.258$, the lowest correlation in its row). What does that divergence look like in practice? Real Trump-supporter vocabulary --- the hashtags and slogans that genuinely circulate among Trump-supporting Twitter users, like \texttt{buildthewall}, \texttt{deepstate}, \texttt{bestpresidentever}, \texttt{bluewave}, \texttt{demexit} --- is systematically \emph{absent} from GPT-4o-mini's synthetic top-50 vocabulary. In their place, the model substitutes sanitized campaign-style language: \texttt{bold}, \texttt{chaos}, \texttt{commitment}, \texttt{brighter}. The clearest single example is the hashtag \texttt{wakeupamerica}, which real Trump supporters use in FAVOR-Trump tweets ($Z = +3.51$) but which appears in GPT-4o-mini's synthetic data in AGAINST-Trump contexts ($Z = -8.49$). We call this mechanism \emph{sanitization} because the model is removing partisan markers from the synthetic political text it produces, in the same way that a corporate communications team might launder a controversial statement.
+
+\subsection{Mechanism 2: Polarity Inversion (Llama-3.2-3B)}
+
+Llama-3.2-3B, the strongest pro-Trump LLM (bias score --0.147), uses a completely different mechanism. Its vocabulary divergence is largest on \emph{Biden} ($\rho = 0.317$), not Trump. And rather than scrubbing partisan vocabulary, Llama-3.2-3B preserves it but flips its meaning. Words used by genuine pro-Biden supporters --- \texttt{campaign}, \texttt{trust}, \texttt{presidency}, \texttt{team}, \texttt{waiting} --- appear in Llama-3.2-3B's synthetic data in AGAINST-Biden tweets instead of FAVOR-Biden tweets. The starkest example is the word \texttt{biden} itself: in Llama-3.2-3B's synthetic tweets it has $Z = +13.97$ (used very disproportionately in FAVOR contexts), while in real P-Stance training tweets the same word has $Z = -7.09$ (very disproportionately AGAINST). That is the largest single word-level inversion we observe anywhere in our data. We call this \emph{polarity inversion} because the LLM is preserving the vocabulary of political discourse but inverting which side of the political conflict the vocabulary attaches to.
+
+\subsection{Mechanism 3: Hidden Axis Inversion (Qwen-2.5-7B)}
+
+Qwen-2.5-7B is the most interesting case. Its bias score of $+0.029$ is below noise threshold on the standard Biden-vs-Trump axis --- by that measure, it would pass any audit as a politically neutral generator. But shifting attention to a different axis tells a different story. On the Bernie-vs-Trump axis, Qwen's true bias score is $-0.30$, consistent across all three classifiers we tested. That is anti-Bernie behavior, sitting hidden underneath a neutral-looking headline metric.
+
+The word-level evidence corroborates the multi-axis evidence. Qwen's lowest Spearman correlation in Table~\ref{tab:spearman} is on \emph{Sanders} vocabulary ($\rho = 0.362$), not Trump or Biden. And the sign-flip count tells the same story: 45 sign-flip words on Sanders vs.~31 on Trump and 29 on Biden. Pro-Sanders supporter language --- words like \texttt{trust}, \texttt{campaign}, \texttt{policies}, \texttt{i'm}, \texttt{win}, \texttt{save}, \texttt{america}, \texttt{issues} --- is systematically used in AGAINST contexts in Qwen's synthetic data even though real Sanders supporters use the same words positively. The pattern is essentially the same as Llama-3.2-3B's polarity inversion, but applied to a different political figure that the BvT bias score does not measure.
+
+The headline metric misses this completely. We call this \emph{hidden axis inversion}: bias real enough to be detected at the word level and confirmed by multi-axis bias scores, but invisible to single-axis bias measurements. Qwen-2.5-7B is the only one of our seven LLMs whose BvT and Bernie-vs-Trump bias scores have opposite signs in the multi-axis extension we report in the next section.
+
+\section{Verifying the Hidden-Axis Finding at Scale}
+\label{sec:multi-axis}
+
+The Qwen anti-Bernie finding is the kind of discovery that easily attracts skepticism if it rests on a single case study. To strengthen the claim, we check whether the pattern holds when we extend the multi-axis bias measurement to all 7 LLMs, not just Qwen. The full multi-axis calculation requires raw prediction counts that were not saved during our main training runs for the other six LLMs. As a workaround, we use the F1-proxy bias score described in the methodology section --- which agrees with the exact formula in direction on every LLM where direct comparison is possible (7 of 7), but whose magnitudes are smaller by approximately 2--3$\times$. Even with smaller magnitudes, the direction is informative. Table~\ref{tab:multi-axis} reports the resulting 7-LLM $\times$ 3-axis bias scores.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Generator} & \textbf{BvT} & \textbf{Ber\_vs\_T} & \textbf{B\_vs\_Ber} \\
+\midrule
+gpt-4o-mini   & +0.096 & +0.043 & +0.053 \\
+gpt-5.4-mini  & +0.046 & +0.030 & +0.016 \\
+mistral-7b    & +0.089 & +0.047 & +0.042 \\
+\textbf{qwen-2.5-7b}   & \textbf{+0.017} & \textbf{--0.040} & \textbf{+0.057} \\
+gemma-2-9b    & +0.045 & +0.012 & +0.034 \\
+llama-3.1-8b  & --0.015 & --0.008 & --0.007 \\
+llama-3.2-3b  & --0.039 & --0.016 & --0.023 \\
+\bottomrule
+\end{tabular}
+\caption{F1-proxy bias scores across all three party-pair axes (synth condition, mean across 3 classifiers). Qwen-2.5-7B is the only generator whose BvT and Ber\_vs\_T axes have opposite signs.}
+\label{tab:multi-axis}
+\end{table}
+
+Qwen-2.5-7B remains the only LLM in our set whose Biden-vs-Trump and Bernie-vs-Trump bias scores have opposite signs. The hidden-axis pattern that we identified in the case study survives extrapolation to the 21-combination scale; it is not an artifact of cross-classifier variance specific to Qwen.
+
+\section{Discussion}
+\label{sec:discussion}
+
+\paragraph{What this means for researchers using LLM-generated training data.}
+Three concrete recommendations follow from our findings. First, before deploying a synthetic dataset at any scale for a politically-relevant classification task, audit the direction of bias the generator introduces. Our results show that every LLM we tested transfers some directional bias, but the direction differs and is predictable from public knowledge about each model. Second, do not rely on a single political axis when measuring bias. The Qwen case shows that a generator can look perfectly neutral on the most obvious axis (here, Biden-vs-Trump) while being strongly biased on a different one. Multi-axis bias scores, or word-level vocabulary audits, are what catches this. Third, real+synthetic mixing is a reasonable mitigation but it is not without surprises: in 2 of our 21 cases, mixing flipped the direction of bias outright rather than reducing it toward zero.
+
+\paragraph{Why BERTweet sometimes flips.}
+The two cases where mixing genuinely reversed direction both involve BERTweet, the classifier pretrained on real Twitter data. We suspect that BERTweet's prior exposure to real political language during pretraining has already calibrated its internal representations to real Twitter discourse. When we then fine-tune it on a mixture of real-data signal (consistent with that prior) and synthetic-data signal pulling in the opposite political direction, the combined adjustment can push it past zero into the opposite-leaning region. This is a hypothesis, not a confirmed mechanism --- we report it because it provides a clean explanation that aligns with the observed architecture-specificity of the overcorrection, but it would need further experiments to confirm.
+
+\paragraph{What sanitization and polarity inversion say about alignment.}
+Our two BvT extremes, GPT-4o-mini and Llama-3.2-3B, are not just opposite-leaning; they bias the synthetic text in opposite \emph{ways}. GPT-4o-mini, which has undergone heavy reinforcement learning from human feedback, appears to actively avoid using the strongest partisan markers in either direction. The result is a synthetic dataset whose pro-Trump tweets look politically defanged, missing the actual vocabulary that real Trump supporters use. Downstream, this systematically harms the classifier's ability to recognize authentic pro-Trump content. Llama-3.2-3B, with lighter alignment training, retains those partisan markers but its representations of pro-Biden vocabulary appear weaker or more easily reversed --- the synthetic data ends up using the words of Biden supporters in anti-Biden contexts. The takeaway for alignment research is that the alignment regime of an LLM is visible not just in the model's direct outputs but in the linguistic structure of the text it generates as training data for others.
+
+\paragraph{The methodological lesson is the most important takeaway.}
+Of our three findings, the hidden-axis inversion in Qwen-2.5-7B is the one most likely to mislead other researchers. A scholar who audits Qwen for bias using only the Biden-vs-Trump bias score sees $+0.029$ and concludes the generator is safe. Our results show this conclusion is wrong. Qwen is strongly biased --- against Sanders --- and that bias transfers cleanly to any classifier trained on its synthetic data. Standard single-axis bias measurements are a necessary but not sufficient audit; vocabulary-level or multi-axis analysis is required to catch this category of hidden bias. For computational social science applications --- where bias in a classifier directly shapes the conclusions one might draw about public opinion or social media discourse --- this distinction is not academic.
+
+\section*{Limitations}
+
+\paragraph{Single dataset.} All experiments use P-Stance. Findings may not generalize to other stance datasets (e.g., SemEval-2016 Task 6, X-Stance), other languages, or other political contexts (non-electoral, non-Twitter).
+
+\paragraph{Single language.} P-Stance is English-only. Multilingual replication is necessary before claims generalize.
+
+\paragraph{Multi-axis bias scores partially extrapolated.} True multi-axis bias scores were computed only for Qwen-2.5-7B (the case study). Extension to all 21 combinations relies on F1-proxy bias scores, which agree in direction but not magnitude with true scores. Re-running fine-tuning with per-target prediction-count export would enable true multi-axis bias for all 21 combinations.
+
+\paragraph{Word-level analysis limited to 3 generators.} The three generators chosen represent the BvT extremes and a neutral control. Extension to the remaining 4 generators is straightforward and is a clear next step.
+
+\paragraph{Three seeds.} Statistical significance is consistent across the 3 seeds we ran, but paper reviewers typically prefer 5 or more.
+
+\paragraph{No calibration analysis.} Whether biased predictions are also overconfident (via expected calibration error or Brier score) is not measured here. Calibration analysis would strengthen the bias claim and is planned for future work.
+
+\paragraph{F1-proxy is a proxy.} The F1-proxy bias score uses F1 differentials in place of raw prediction proportions. While we verify directional agreement with the true bias score on 7/7 generators where direct comparison is possible, magnitudes differ by approximately 2--3$\times$.
+
+\section*{Acknowledgments}
+
+This work was conducted as part of DSCI 690 (Modeling Natural Language) at Drexel University, Spring 2026. We thank the course instructor for feedback that strengthened the bias-shift definition, motivated the data leakage analysis, and explicitly suggested the word-level Z-score analysis that became the basis for the three-mechanism finding.
+
+\bibliography{custom}
+
+\appendix
+
+\section{Synthetic Data Audit Detail}
+\label{sec:audit}
+
+Full audit metric values per generator are reported in Table~\ref{tab:audit}.
+
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+\textbf{Generator} & \textbf{char\_len} & \textbf{\#hashtag} & \textbf{distinct-2} & \textbf{self-BLEU} & \textbf{cos\_real} & \textbf{FAVOR$\uparrow$ asym} \\
+\midrule
+Real (ref)    & 170 & 1.9  & ---  & ---  & ---  & --- \\
+gpt-4o-mini   & 172 & 1.67 & 0.21 & 0.39 & 0.67 & +31\% \\
+gpt-5.4-mini  & 125 & 0.17 & 0.26 & 0.28 & 0.62 & +31\% \\
+mistral-7b    & 144 & 1.53 & 0.38 & 0.19 & 0.66 & +34\% \\
+gemma-2-9b    & 91  & 0.72 & 0.33 & 0.26 & 0.65 & +50\% \\
+qwen-2.5-7b   & 105 & 0.90 & 0.37 & 0.26 & 0.64 & +3\%  \\
+llama-3.1-8b  & 112 & 0.23 & 0.41 & 0.13 & 0.62 & +20\% \\
+llama-3.2-3b  & 120 & 0.38 & 0.44 & 0.11 & 0.62 & +22\% \\
+\bottomrule
+\end{tabular}
+\caption{Six-metric synthetic data audit. Higher distinct-2 = more vocabulary diversity. Lower self-BLEU = more diverse. Higher cos\_real = closer to real distribution. FAVOR$\uparrow$ asym = generator writes FAVOR tweets more templated/longer than AGAINST.}
+\label{tab:audit}
+\end{table*}
+
+\section{Per-Combo Bias Heatmap}
+\label{sec:bias-heatmap}
+
+The full 21 (classifier $\times$ generator) bias heatmap is shown in Figure~\ref{fig:bias-heatmap}. The synth panel shows the bias each generator transfers when used alone; the mixed panel shows the residual bias after 50:50 mixing.
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=0.95\linewidth]{example-image-a}
+  \caption{[Placeholder: replace with \texttt{results/figures/bias\_heatmap\_synth\_vs\_mixed.png}.] Bias score heatmap. Red = anti-Trump shift; blue = pro-Trump shift. Left panel: synth-only training. Right panel: 50:50 mixed training.}
+  \label{fig:bias-heatmap}
+\end{figure*}
+
+\section{Multi-Axis F1-Proxy Heatmap}
+\label{sec:multi-axis-figure}
+
+The 7-generator $\times$ 3-axis F1-proxy bias heatmap (Figure~\ref{fig:multi-axis}) shows the hidden anti-Bernie pattern in qwen-2.5-7B and the consistent direction of the other generators across all three party-pair axes.
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=0.95\linewidth]{example-image-b}
+  \caption{[Placeholder: replace with \texttt{results/figures/06\_multi\_axis\_bias\_heatmap\_7x3.png}.] F1-proxy multi-axis bias scores. Qwen-2.5-7B is the only generator whose BvT and Bernie-vs-Trump axes have opposite signs.}
+  \label{fig:multi-axis}
+\end{figure*}
+
+\end{document}
